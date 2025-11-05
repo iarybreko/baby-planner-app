@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Baby Day Planner</title>
     <script>
-      // Apply saved theme before paint
       (function(){
         try {
           const saved = localStorage.getItem("bp_theme");
@@ -15,9 +14,7 @@
     </script>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
-      tailwind.config = {
-        darkMode: 'class'
-      }
+      tailwind.config = { darkMode: 'class' }
     </script>
     <style>
       input[type="time"]{min-width:90px}
@@ -56,7 +53,6 @@
       const minutesUntil = (d) => Math.max(0, Math.round((d.getTime() - Date.now()) / 60000));
       const sortEvents = (arr) => [...arr].sort((a,b)=> a.start - b.start);
 
-      // Build schedule
       function buildSchedule({ firstWake, firstFeed, bedtime, feedEveryHours, napEveryHours, napDurationMinutes }) {
         const events = [];
         for (let t = new Date(firstFeed); isBefore(t, bedtime); t = addHours(t, feedEveryHours)) {
@@ -72,7 +68,6 @@
         return sortEvents(events);
       }
 
-      // Shift only following items of the same type by deltaMinutes
       function shiftFollowingSameType(events, index, deltaMinutes) {
         const targetType = events[index].type;
         const shifted = events.map((e, i) => {
@@ -192,7 +187,6 @@
           try { return localStorage.getItem("bp_theme") || "light"; } catch { return "light"; }
         });
 
-        // Apply theme
         useEffect(() => {
           const root = document.documentElement;
           if (theme === "dark") root.classList.add("dark"); else root.classList.remove("dark");
@@ -223,7 +217,6 @@
           setEvents(sortEvents(updated));
         };
 
-        // Confirm now: same-type cascade; keep nap duration by shifting end with start
         const confirmNow = (idx) => {
           const actual = new Date();
           const planned = events[idx].start;
@@ -241,7 +234,6 @@
           setEvents(shiftFollowingSameType(updated, idx, delta));
         };
 
-        // Nudge: same-type cascade
         const nudge = (idx, minutes) => {
           const updated = events.map((e, i) => (i === idx ? { ...e, start: addMinutes(e.start, minutes), end: e.end ? addMinutes(e.end, minutes) : undefined } : e));
           setEvents(shiftFollowingSameType(updated, idx, minutes));
@@ -255,7 +247,6 @@
           return nextIdx === i; 
         };
 
-        // Editable nap start/end via time-only inputs (no cascade; individual change)
         const setNapStartTime = (idx, hhmm) => {
           const updated = events.map((e,i)=> i===idx ? { ...e, start: timeToDate(e.start, hhmm) } : e);
           setEvents(sortEvents(updated));
@@ -265,13 +256,11 @@
           setEvents(sortEvents(updated));
         };
 
-        // Set feed ml
         const setFeedMl = (idx, ml) => {
           const updated = events.map((e,i)=> i===idx ? { ...e, ml } : e);
           setEvents(updated);
         };
 
-        // --- Recap numbers: ONLY completed (ticked) items ---
         const completedFeeds = events.filter(e => e.type === "feed" && e.completed);
         const totalFeeds = completedFeeds.length;
         const totalMl = completedFeeds.reduce((sum, e) => sum + (e.ml ? Number(e.ml) : 0), 0);
@@ -304,7 +293,6 @@
           setTimeout(regenerate, 0);
         };
 
-        // --- UI ---
         return React.createElement(
           "div",
           { className: "min-h-screen bg-slate-50 text-slate-800 dark:bg-slate-950 dark:text-slate-100 p-4 sm:p-6" },
@@ -313,19 +301,13 @@
               React.createElement("h1", { className: "text-2xl sm:text-3xl font-bold" }, "Baby Day Planner"),
               React.createElement("div", { className: "flex items-center gap-3" },
                 React.createElement("label", { className: "flex items-center gap-2 text-sm" },
-                  React.createElement("input", {
-                    type: "checkbox",
-                    className: "toggle accent-slate-700 h-4 w-4",
-                    checked: theme === "dark",
-                    onChange: (e)=> setTheme(e.target.checked ? "dark" : "light")
-                  }),
+                  React.createElement("input", { type: "checkbox", className: "toggle accent-slate-700 h-4 w-4", checked: theme === "dark", onChange: (e)=> setTheme(e.target.checked ? "dark" : "light") }),
                   "Dark mode"
                 ),
                 React.createElement("div", { className: "text-xs text-slate-500 dark:text-slate-400" }, "Local-only • Free")
               )
             ),
             React.createElement("div", { className: "grid lg:grid-cols-2 gap-4 mb-5" },
-              // Left column
               React.createElement("div", null,
                 React.createElement("div", { className: "bg-white dark:bg-slate-900 rounded-2xl shadow p-4 mb-4" },
                   React.createElement("h2", { className: "font-semibold mb-3" }, "Settings"),
@@ -367,10 +349,10 @@
                       const disabled = !!e.completed;
                       return React.createElement("li", {
                         key: e.id,
-                        className: `border dark:border-slate-700 rounded-xl p-3 grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3 items-center ${e.type === "feed" ? "border-indigo-200/60 bg-indigo-50/40 dark:bg-indigo-950/30" : "border-emerald-200/60 bg-emerald-50/40 dark:bg-emerald-950/30"} ${isNext(idx) ? "ring-2 ring-offset-2 ring-black/10 dark:ring-white/10 dark:ring-offset-slate-950" : ""} ${e.completed ? "opacity-60 grayscale" : ""}`
+                        className: `border dark:border-slate-700 rounded-xl p-3 grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_auto] gap-3 items-center ${e.type === "feed" ? "border-indigo-200/60 bg-indigo-50/40 dark:bg-indigo-950/30" : "border-emerald-200/60 bg-emerald-50/40 dark:bg-emerald-950/30"} ${isNext(idx) ? "ring-2 ring-offset-2 ring-black/10 dark:ring-white/10 dark:ring-offset-slate-950" : ""} ${e.completed ? "opacity-60 grayscale" : ""}`
                       },
-                      React.createElement("div", { className: "flex flex-col gap-2" },
-                        React.createElement("div", { className: "flex items-center gap-3" },
+                      React.createElement("div", { className: "min-w-0 flex flex-col gap-2" },
+                        React.createElement("div", { className: "flex flex-wrap items-center gap-3" },
                           React.createElement("input", { type: "checkbox", className: "h-5 w-5 accent-slate-700", checked: !!e.completed, onChange: (ev) => setCompleted(idx, ev.target.checked) }),
                           e.type === "feed"
                             ? React.createElement(React.Fragment, null,
@@ -395,7 +377,7 @@
                         ),
                         React.createElement("div", { className: "text-xs text-slate-500 dark:text-slate-400 ml-8" }, `${minutesUntil(e.start)} min from now`)
                       ),
-                      React.createElement("div", { className: "flex gap-2 items-center md:justify-end" },
+                      React.createElement("div", { className: "shrink-0 flex flex-wrap gap-2 items-center md:justify-end" },
                         React.createElement("button", { className: "px-3 py-1.5 rounded-lg border dark:border-slate-700", onClick: () => nudge(idx, -15), disabled }, "-15m"),
                         React.createElement("button", { className: "px-3 py-1.5 rounded-lg border dark:border-slate-700", onClick: () => nudge(idx, 15), disabled }, "+15m"),
                         React.createElement("button", { className: `px-3 py-1.5 rounded-lg text-white ${e.type === "feed" ? "bg-indigo-700" : "bg-emerald-700"}`, onClick: () => confirmNow(idx), disabled }, "Confirm now"),
@@ -405,7 +387,6 @@
                   )
                 )
               ),
-              // Right column: Notifications + Always-on Recap
               React.createElement("div", null,
                 React.createElement("div", { className: "bg-white dark:bg-slate-900 rounded-2xl shadow p-4 mb-4" },
                   React.createElement("h2", { className: "font-semibold mb-3" }, "Notifications"),
