@@ -172,6 +172,7 @@
         const [events, setEvents] = useState(saved?.events || []);
         const [theme, setTheme] = useState(() => { try { return localStorage.getItem("bp_theme") || "light"; } catch { return "light"; } });
 
+        // theme
         useEffect(() => {
           const root = document.documentElement;
           if (theme === "dark") root.classList.add("dark"); else root.classList.remove("dark");
@@ -185,10 +186,21 @@
         };
 
         useEffect(() => { if (!saved) regenerate(); }, []);
+
+        // Persist
         useEffect(() => { saveState({ firstWake, firstFeed, bedtime, feedEvery, napEvery, napDuration, events }); }, [firstWake, firstFeed, bedtime, feedEvery, napEvery, napDuration, events]);
+
+        // Notifications
         useEffect(() => {
           (async () => { try { await ensureNotificationPermission(); cleanupTimersRef.current(); cleanupTimersRef.current = scheduleLocalNotifs(events); } catch {} })();
           return () => cleanupTimersRef.current();
+        }, [events]);
+
+        // --- Enforce global chronological ordering (safety net) ---
+        useEffect(() => {
+          const sorted = events.slice().sort((a,b)=>a.start-b.start);
+          const sameOrder = sorted.length===events.length && sorted.every((e,i)=> e.id === events[i].id);
+          if (!sameOrder) setEvents(sorted);
         }, [events]);
 
         const setCompleted = (idx, value) => setEvents(sortEvents(events.map((e,i)=> i===idx ? { ...e, completed: value } : e)));
@@ -203,7 +215,6 @@
 
         const nudge = (idx, minutes) => setEvents(sortEvents(shiftFollowingSameType(events.map((e,i)=> i===idx ? { ...e, start: addMinutes(e.start, minutes), end: e.end ? addMinutes(e.end, minutes) : undefined } : e), idx, minutes)));
         const skip = (idx) => setEvents(sortEvents(events.filter((_, i) => i !== idx)));
-        const isNext = (i) => { const now = new Date(); const nextIdx = events.findIndex(e => e.start > now && !e.completed); return nextIdx === i; };
 
         // Nap edits
         const setNapStartTime = (idx, hhmm) => {
