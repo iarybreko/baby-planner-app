@@ -1,403 +1,295 @@
 <!doctype html>
-<html lang="en" class="">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Baby Day Planner</title>
-    <script>
-      (function(){
-        try { if (localStorage.getItem("bp_theme")==="dark") document.documentElement.classList.add("dark"); } catch(e){}
-      })();
-    </script>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script> tailwind.config = { darkMode: 'class' } </script>
-    <style>
-      input[type="time"]{min-width:84px}
-      .chip{font-size:.7rem;letter-spacing:.04em}
-      .btn{padding:.45rem .75rem;border-radius:.6rem;border:1px solid rgb(226 232 240);}
-      .btn.dark{border-color:rgb(51 65 85);}
-    </style>
-  </head>
-  <body class="min-h-screen bg-slate-50 text-slate-800 dark:bg-slate-950 dark:text-slate-100">
-    <div id="root"></div>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Baby Day Planner</title>
+  <script>(function(){try{if(localStorage.getItem("bp_theme")==="dark")document.documentElement.classList.add("dark")}catch(e){}})();</script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>tailwind.config={darkMode:'class'}</script>
+  <style>
+    input[type="time"]{min-width:84px}
+    .chip{font-size:.7rem;letter-spacing:.04em}
+    .btn{padding:.45rem .75rem;border-radius:.6rem;border:1px solid rgb(226 232 240)}
+    .btn.dark{border-color:rgb(51 65 85)}
+  </style>
+</head>
+<body class="min-h-screen bg-slate-50 text-slate-800 dark:bg-slate-950 dark:text-slate-100">
+  <div id="root"></div>
 
-    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 
-    <script>
-      // ---- time helpers ----
-      const addMinutes = (d, m) => new Date(d.getTime() + m * 60000);
-      const addHours = (d, h) => addMinutes(d, h * 60);
-      const differenceInMinutes = (a, b) => Math.round((a.getTime() - b.getTime()) / 60000);
-      const isBefore = (a, b) => a.getTime() < b.getTime();
-      const startOfDay = (d) => { const x = new Date(d); x.setHours(0,0,0,0); return x; };
-      const parseISO = (s) => new Date(s);
-      const pad2 = (n) => String(n).padStart(2,"0");
-      const formatHHmm = (d) => `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
-      const timeToDate = (baseDate, hhmm) => { const [hh, mm]=hhmm.split(":").map(Number); const nd = new Date(baseDate); nd.setHours(hh, mm??0, 0, 0); return nd; };
+  <script>
+    // ---------- time helpers ----------
+    const addMinutes = (d,m)=>new Date(d.getTime()+m*60000);
+    const addHours = (d,h)=>addMinutes(d,h*60);
+    const diffMin = (a,b)=>Math.round((a.getTime()-b.getTime())/60000);
+    const isBefore=(a,b)=>a.getTime()<b.getTime();
+    const startOfDay=d=>{const x=new Date(d);x.setHours(0,0,0,0);return x};
+    const pad2=n=>String(n).padStart(2,"0");
+    const fmtHHmm=d=>`${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+    const parseISO=s=>new Date(s);
+    const timeToDate=(base,hhmm)=>{const[H,M]=hhmm.split(":").map(Number);const x=new Date(base);x.setHours(H,M??0,0,0);return x};
+    const toLocalInput=d=>`${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+    const fromLocalInput=s=>new Date(s);
 
-      const { useEffect, useRef, useState } = React;
+    const {useEffect,useRef,useState}=React;
+    const uid=()=>Math.random().toString(36).slice(2,10);
+    const sortEvents=arr=>[...arr].sort((a,b)=>a.start-b.start);
 
-      // ---- data helpers ----
-      const uid = () => Math.random().toString(36).slice(2, 10);
-      const toLocalInput = (d) => `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
-      const fromLocalInput = (s) => new Date(s);
-      const clampToToday = (d) => { const today = startOfDay(new Date()); return d < today ? today : d; };
-      const minutesUntil = (d) => Math.max(0, Math.round((d.getTime() - Date.now()) / 60000));
-      const sortEvents = (arr) => [...arr].sort((a,b)=> a.start - b.start);
+    // ---------- v4 Scheduler (clean) ----------
+    // Emits the next earliest event (feed or nap) until bedtime.
+    function generateTimeline({firstWake,firstFeed,bedtime,feedEveryH,napEveryH,napLenMin}){
+      const out=[];
+      let nextFeed=new Date(firstFeed);
+      let nextNapStart=addHours(firstWake,napEveryH);
+      let nextNapEnd=addMinutes(nextNapStart,napLenMin);
 
-      // v3.8: Interleaved generator — always pick the next earliest event
-      function buildSchedule({ firstWake, firstFeed, bedtime, feedEveryHours, napEveryHours, napDurationMinutes }) {
-        const events = [];
-        let nextFeed = new Date(firstFeed);
-        let nextNapStart = addHours(firstWake, napEveryHours);
-        let nextNapEnd = addMinutes(nextNapStart, napDurationMinutes);
+      while(true){
+        const tFeed=nextFeed?nextFeed.getTime():Infinity;
+        const tNap=nextNapStart?nextNapStart.getTime():Infinity;
+        const tMin=Math.min(tFeed,tNap);
+        if(!isFinite(tMin))break;
+        if(tMin>=bedtime.getTime())break;
 
-        // loop until next event would start after bedtime
-        while (true) {
-          const nextEventTime = (t) => (t ? t.getTime() : Infinity);
-          const tFeed = nextEventTime(nextFeed);
-          const tNap = nextEventTime(nextNapStart);
-          const tMin = Math.min(tFeed, tNap);
-          if (!isFinite(tMin)) break;
-          if (tMin >= bedtime.getTime()) break;
-
-          if (tFeed <= tNap) {
-            // feed comes next
-            events.push({ id: uid(), type: "feed", start: new Date(nextFeed), completed: false, ml: null });
-            nextFeed = addHours(nextFeed, feedEveryHours);
-          } else {
-            // nap comes next
-            events.push({ id: uid(), type: "nap", start: new Date(nextNapStart), end: new Date(nextNapEnd), completed: false });
-            // next nap starts after previous nap end + napEveryHours
-            nextNapStart = addHours(nextNapEnd, napEveryHours);
-            nextNapEnd = addMinutes(nextNapStart, napDurationMinutes);
-          }
+        if(tFeed<=tNap){
+          out.push({id:uid(),type:"feed",start:new Date(nextFeed),completed:false,ml:null});
+          nextFeed=addHours(nextFeed,feedEveryH);
+        }else{
+          out.push({id:uid(),type:"nap",start:new Date(nextNapStart),end:new Date(nextNapEnd),completed:false});
+          // next nap starts napEveryH after previous nap's END
+          nextNapStart=addHours(nextNapEnd,napEveryH);
+          nextNapEnd=addMinutes(nextNapStart,napLenMin);
         }
-        return sortEvents(events);
       }
+      return sortEvents(out);
+    }
 
-      // Shift only following items of the same type by delta minutes
-      function shiftFollowingSameType(events, index, deltaMinutes) {
-        const targetType = events[index].type;
-        const shifted = events.map((e, i) => {
-          if (i <= index) return e;
-          if (e.type !== targetType) return e;
-          const start = addMinutes(e.start, deltaMinutes);
-          const end = e.end ? addMinutes(e.end, deltaMinutes) : undefined;
-          return { ...e, start, end };
-        });
-        return sortEvents(shifted);
+    // Shift following items of the same type by delta minutes
+    function shiftFollowingSameType(events,index,deltaMin){
+      const t=events[index].type;
+      const res=events.map((e,i)=>{
+        if(i<=index||e.type!==t) return e;
+        const start=addMinutes(e.start,deltaMin);
+        const end=e.end?addMinutes(e.end,deltaMin):undefined;
+        return {...e,start,end};
+      });
+      return sortEvents(res);
+    }
+
+    // Cascade naps after a specific nap by interval from previous END
+    function cascadeNapsFrom(events, napId, napEveryH, defaultLen){
+      const res=[...events];
+      const naps=res.filter(e=>e.type==="nap").sort((a,b)=>a.start-b.start);
+      const idx=naps.findIndex(n=>n.id===napId);
+      if(idx===-1) return sortEvents(res);
+      for(let i=idx+1;i<naps.length;i++){
+        const prev=naps[i-1];
+        const prevEnd=prev.end||addMinutes(prev.start,defaultLen);
+        const newStart=addHours(prevEnd,napEveryH);
+        const dur=naps[i].end&&naps[i].start?diffMin(naps[i].end,naps[i].start):defaultLen;
+        const newEnd=addMinutes(newStart,dur);
+        // write back
+        const evIdx=res.findIndex(ev=>ev.id===naps[i].id);
+        res[evIdx]={...naps[i],start:newStart,end:newEnd};
+        naps[i]=res[evIdx];
       }
+      return sortEvents(res);
+    }
 
-      function saveState(state) {
-        localStorage.setItem("babyPlannerState", JSON.stringify({
-          ...state,
-          firstWake: state.firstWake.toISOString(),
-          firstFeed: state.firstFeed.toISOString(),
-          bedtime: state.bedtime.toISOString(),
-          events: state.events.map(e => ({
-            ...e,
-            start: e.start.toISOString(),
-            end: e.end ? e.end.toISOString() : undefined,
-          })),
-        }));
-      }
+    function App(){
+      const now=new Date();
+      const [theme,setTheme]=useState(()=>{try{return localStorage.getItem("bp_theme")||"dark"}catch{return"dark"}});
+      useEffect(()=>{document.documentElement.classList.toggle("dark",theme==="dark"); try{localStorage.setItem("bp_theme",theme)}catch{}},[theme]);
 
-      function loadState() {
-        try {
-          const raw = localStorage.getItem("babyPlannerState");
-          if (!raw) return null;
-          const p = JSON.parse(raw);
-          return {
-            ...p,
-            firstWake: parseISO(p.firstWake),
-            firstFeed: parseISO(p.firstFeed),
-            bedtime: parseISO(p.bedtime),
-            events: sortEvents(p.events.map(e => ({
-              ...e,
-              start: parseISO(e.start),
-              end: e.end ? parseISO(e.end) : undefined,
-              completed: !!e.completed,
-              ml: (e.ml === undefined ? null : e.ml)
-            }))),
-          };
-        } catch { return null; }
-      }
+      // Settings
+      const [firstWake,setFirstWake]=useState(fromLocalInput(toLocalInput(new Date(now.getFullYear(),now.getMonth(),now.getDate(),9,0))));
+      const [firstFeed,setFirstFeed]=useState(fromLocalInput(toLocalInput(new Date(now.getFullYear(),now.getMonth(),now.getDate(),9,40))));
+      const [bedtime,setBedtime]=useState(fromLocalInput(toLocalInput(new Date(now.getFullYear(),now.getMonth(),now.getDate(),19,0))));
+      const [feedEvery,setFeedEvery]=useState(4);
+      const [napEvery,setNapEvery]=useState(2);
+      const [napLen,setNapLen]=useState(20);
 
-      function ensureNotificationPermission() {
-        if (!("Notification" in window)) return Promise.resolve("unsupported");
-        if (Notification.permission === "granted") return Promise.resolve("granted");
-        if (Notification.permission === "denied") return Promise.resolve("denied");
-        return Notification.requestPermission();
-      }
+      const [events,setEvents]=useState(()=>generateTimeline({firstWake,firstFeed,bedtime,feedEveryH:feedEvery,napEveryH:napEvery,napLenMin:napLen}));
 
-      function scheduleLocalNotifs(events) {
-        const timers = [];
-        for (const e of events) {
-          if (e.completed) continue;
-          const title = e.type === "feed" ? "Feed" : "Nap";
-          const when = addMinutes(e.start, -5);
-          const ms = when.getTime() - Date.now();
-          if (ms > 0 && ms < 1000 * 60 * 60 * 24) {
-            const id = window.setTimeout(() => {
-              if ("Notification" in window && Notification.permission === "granted") {
-                const body = `${title} at ${formatHHmm(e.start)}`;
-                new Notification("Reminder", { body });
-              }
-            }, ms);
-            timers.push(id);
-          }
-        }
-        return () => timers.forEach(clearTimeout);
-      }
+      // Persist/restore
+      useEffect(()=>{
+        try{
+          const save={firstWake:firstWake.toISOString(),firstFeed:firstFeed.toISOString(),bedtime:bedtime.toISOString(),
+            feedEvery,napEvery,napLen,
+            events:events.map(e=>({...e,start:e.start.toISOString(),end:e.end?e.end.toISOString():undefined}))};
+          localStorage.setItem("bp_v4_state",JSON.stringify(save));
+        }catch{}
+      },[firstWake,firstFeed,bedtime,feedEvery,napEvery,napLen,events]);
 
-      // Re-space following naps using "napEvery" interval from the previous nap's END
-      function cascadeFollowingNapsByInterval(allEvents, editedNapId, napEveryHours, napDurationDefault) {
-        const events = [...allEvents];
-        const naps = events.filter(e => e.type === "nap").sort((a,b)=>a.start-b.start);
-        const idx = naps.findIndex(n => n.id === editedNapId);
-        if (idx === -1) return sortEvents(events);
+      useEffect(()=>{
+        try{
+          const raw=localStorage.getItem("bp_v4_state");
+          if(!raw) return;
+          const s=JSON.parse(raw);
+          setFirstWake(new Date(s.firstWake));
+          setFirstFeed(new Date(s.firstFeed));
+          setBedtime(new Date(s.bedtime));
+          setFeedEvery(s.feedEvery);
+          setNapEvery(s.napEvery);
+          setNapLen(s.napLen);
+          setEvents(s.events.map(e=>({...e,start:new Date(e.start),end:e.end?new Date(e.end):undefined})).sort((a,b)=>a.start-b.start));
+        }catch{}
+      },[]);
 
-        for (let i = idx + 1; i < naps.length; i++) {
-          const prev = naps[i-1];
-          const prevEnd = prev.end || addMinutes(prev.start, napDurationDefault);
-          const newStart = addHours(prevEnd, napEveryHours);
-          const dur = naps[i].end && naps[i].start ? differenceInMinutes(naps[i].end, naps[i].start) : napDurationDefault;
-          const newEnd = addMinutes(newStart, dur);
-          naps[i] = { ...naps[i], start: newStart, end: newEnd };
-          const evIdx = events.findIndex(ev => ev.id === naps[i].id);
-          events[evIdx] = naps[i];
-        }
-        return sortEvents(events);
-      }
+      const regenerate=()=>{
+        setEvents(generateTimeline({firstWake,firstFeed,bedtime,feedEveryH:feedEvery,napEveryH:napEvery,napLenMin:napLen}));
+      };
+      const reset=()=>{localStorage.removeItem("bp_v4_state"); location.reload();};
 
-      function App() {
-        const now = new Date();
-        const saved = loadState();
+      const setCompleted=(idx,val)=> setEvents(sortEvents(events.map((e,i)=> i===idx?{...e,completed:val}:e)));
+      const confirmNow=(idx)=>{
+        const actual=new Date();
+        const delta=diffMin(actual,events[idx].start);
+        const updated=events.map((e,i)=> i!==idx?e : (e.type==="nap"&&e.end)?{...e,start:actual,end:addMinutes(actual,diffMin(e.end,e.start)),completed:true}:{...e,start:actual,completed:true});
+        setEvents(sortEvents(shiftFollowingSameType(updated,idx,delta)));
+      };
+      const nudge=(idx,mins)=> setEvents(sortEvents(shiftFollowingSameType(events.map((e,i)=> i===idx?{...e,start:addMinutes(e.start,mins),end:e.end?addMinutes(e.end,mins):undefined}:e),idx,mins)));
+      const skip=(idx)=> setEvents(sortEvents(events.filter((_,i)=>i!==idx)));
 
-        const [firstWake, setFirstWake] = useState(saved?.firstWake || clampToToday(now));
-        const [firstFeed, setFirstFeed] = useState(saved?.firstFeed || addMinutes(clampToToday(now), 15));
-        const [bedtime, setBedtime] = useState(saved?.bedtime || (() => { const d = new Date(now); d.setHours(19,0,0,0); return d; })());
-        const [feedEvery, setFeedEvery] = useState(saved?.feedEvery || 4);
-        const [napEvery, setNapEvery] = useState(saved?.napEvery || 2);
-        const [napDuration, setNapDuration] = useState(saved?.napDuration || 60);
-        const [events, setEvents] = useState(saved?.events || []);
-        const [theme, setTheme] = useState(() => { try { return localStorage.getItem("bp_theme") || "light"; } catch { return "light"; } });
+      // Nap edits
+      const setNapStart=(idx,val)=> setEvents(sortEvents(events.map((e,i)=> i===idx?{...e,start:timeToDate(e.start,val)}:e)));
+      const setNapEnd=(idx,val)=>{
+        const editedId=events[idx].id;
+        let updated=events.map((e,i)=> i===idx?{...e,end:timeToDate(e.start,val)}:e);
+        updated=cascadeNapsFrom(updated,editedId,napEvery,napLen);
+        setEvents(sortEvents(updated));
+      };
 
-        // theme
-        useEffect(() => {
-          const root = document.documentElement;
-          if (theme === "dark") root.classList.add("dark"); else root.classList.remove("dark");
-          try { localStorage.setItem("bp_theme", theme); } catch {}
-        }, [theme]);
+      const setFeedMl=(idx,ml)=> setEvents(sortEvents(events.map((e,i)=> i===idx?{...e,ml}:e)));
 
-        const cleanupTimersRef = useRef(() => {});
-        const regenerate = () => {
-          const plan = buildSchedule({ firstWake, firstFeed, bedtime, feedEveryHours: feedEvery, napEveryHours: napEvery, napDurationMinutes: napDuration });
-          setEvents(plan);
-        };
+      const minsUntil=d=>Math.max(0,Math.round((d.getTime()-Date.now())/60000));
 
-        useEffect(() => { if (!saved) regenerate(); }, []);
-        useEffect(() => { saveState({ firstWake, firstFeed, bedtime, feedEvery, napEvery, napDuration, events }); }, [firstWake, firstFeed, bedtime, feedEvery, napEvery, napDuration, events]);
-        useEffect(() => {
-          (async () => { try { await ensureNotificationPermission(); cleanupTimersRef.current(); cleanupTimersRef.current = scheduleLocalNotifs(events); } catch {} })();
-          return () => cleanupTimersRef.current();
-        }, [events]);
+      // recap
+      const feedsDone=events.filter(e=>e.type==="feed"&&e.completed);
+      const milk=feedsDone.reduce((s,e)=>s+(e.ml?Number(e.ml):0),0);
+      const napsDone=events.filter(e=>e.type==="nap"&&e.completed&&e.end);
+      const napMin=napsDone.reduce((s,e)=>s+Math.max(0,diffMin(e.end,e.start)),0);
+      const hh=Math.floor(napMin/60),mm=napMin%60;
 
-        // Global chronological sort safety net
-        useEffect(() => {
-          const sorted = events.slice().sort((a,b)=>a.start-b.start);
-          const same = sorted.length===events.length && sorted.every((e,i)=> e.id===events[i].id);
-          if (!same) setEvents(sorted);
-        }, [events]);
-
-        const setCompleted = (idx, value) => setEvents(sortEvents(events.map((e,i)=> i===idx ? { ...e, completed: value } : e)));
-
-        const confirmNow = (idx) => {
-          const actual = new Date();
-          const planned = events[idx].start;
-          const delta = differenceInMinutes(actual, planned);
-          const updated = events.map((e, i) => i!==idx ? e : (e.type==="nap" && e.end) ? { ...e, start: actual, end: addMinutes(actual, differenceInMinutes(e.end, e.start)), confirmed:true, completed:true } : { ...e, start: actual, confirmed:true, completed:true });
-          setEvents(sortEvents(shiftFollowingSameType(updated, idx, delta)));
-        };
-
-        const nudge = (idx, minutes) => setEvents(sortEvents(shiftFollowingSameType(events.map((e,i)=> i===idx ? { ...e, start: addMinutes(e.start, minutes), end: e.end ? addMinutes(e.end, minutes) : undefined } : e), idx, minutes)));
-        const skip = (idx) => setEvents(sortEvents(events.filter((_, i) => i !== idx)));
-
-        // Nap edits
-        const setNapStartTime = (idx, hhmm) => {
-          const updated = events.map((e,i)=> i===idx ? { ...e, start: timeToDate(e.start, hhmm) } : e);
-          setEvents(sortEvents(updated)); // start edit does not cascade
-        };
-
-        const setNapEndTime = (idx, hhmm) => {
-          const editedId = events[idx].id;
-          let updated = events.map((e,i)=> i===idx ? { ...e, end: timeToDate(e.start, hhmm) } : e);
-          updated = cascadeFollowingNapsByInterval(updated, editedId, napEvery, napDuration);
-          setEvents(sortEvents(updated));
-        };
-
-        const setFeedMl = (idx, ml) => setEvents(sortEvents(events.map((e,i)=> i===idx ? { ...e, ml } : e)));
-
-        // Recap values
-        const completedFeeds = events.filter(e => e.type === "feed" && e.completed);
-        const totalFeeds = completedFeeds.length;
-        const totalMl = completedFeeds.reduce((s, e) => s + (e.ml ? Number(e.ml) : 0), 0);
-        const completedNaps = events.filter(e => e.type === "nap" && e.completed && e.end);
-        const totalNaps = completedNaps.length;
-        const totalNapMinutes = completedNaps.reduce((s, e) => s + Math.max(0, differenceInMinutes(e.end, e.start)), 0);
-        const hh = Math.floor(totalNapMinutes / 60);
-        const mm = totalNapMinutes % 60;
-
-        return React.createElement(
-          "div",
-          { className: "min-h-screen bg-slate-50 text-slate-800 dark:bg-slate-950 dark:text-slate-100 p-4 sm:p-6" },
-          React.createElement("div", { className: "max-w-5xl mx-auto" },
-            React.createElement("header", { className: "flex items-center justify-between mb-5" },
-              React.createElement("h1", { className: "text-2xl sm:text-3xl font-bold" }, "Baby Day Planner"),
-              React.createElement("label", { className: "flex items-center gap-2 text-sm" },
-                React.createElement("input", { type: "checkbox", className: "accent-slate-700 h-4 w-4", checked: theme === "dark", onChange: (e)=> setTheme(e.target.checked ? "dark" : "light") }),
-                "Dark mode"
-              )
-            ),
-            React.createElement("div", { className: "grid lg:grid-cols-2 gap-4 mb-5" },
-              // Left: Settings + Plan
-              React.createElement("div", null,
-                React.createElement("div", { className: "bg-white dark:bg-slate-900 rounded-2xl shadow p-4 mb-4" },
-                  React.createElement("h2", { className: "font-semibold mb-3" }, "Settings"),
-                  React.createElement("label", { className: "block text-sm mb-2" }, "First wake time"),
-                  React.createElement("input", { className: "w-full border dark:border-slate-700 bg-white dark:bg-slate-800 rounded-xl p-2 mb-3", type: "datetime-local", value: toLocalInput(firstWake), onChange: (e) => setFirstWake(fromLocalInput(e.target.value)) }),
-                  React.createElement("label", { className: "block text-sm mb-2" }, "First feed time"),
-                  React.createElement("input", { className: "w-full border dark:border-slate-700 bg-white dark:bg-slate-800 rounded-xl p-2 mb-3", type: "datetime-local", value: toLocalInput(firstFeed), onChange: (e) => setFirstFeed(fromLocalInput(e.target.value)) }),
-                  React.createElement("div", { className: "grid grid-cols-2 gap-3" },
-                    React.createElement("div", null,
-                      React.createElement("label", { className: "block text-sm mb-2" }, "Bedtime"),
-                      React.createElement("input", { className: "w-full border dark:border-slate-700 bg-white dark:bg-slate-800 rounded-xl p-2 mb-3", type: "datetime-local", value: toLocalInput(bedtime), onChange: (e) => setBedtime(fromLocalInput(e.target.value)) }),
-                    ),
-                    React.createElement("div", null,
-                      React.createElement("label", { className: "block text-sm mb-2" }, "Nap length (min)"),
-                      React.createElement("input", { className: "w-full border dark:border-slate-700 bg-white dark:bg-slate-800 rounded-xl p-2 mb-3", type: "number", min: 20, max: 180, value: napDuration, onChange: (e) => setNapDuration(parseInt(e.target.value || "60", 10)) }),
-                    ),
-                  ),
-                  React.createElement("div", { className: "grid grid-cols-2 gap-3" },
-                    React.createElement("div", null,
-                      React.createElement("label", { className: "block text-sm mb-2" }, "Feed every (h)"),
-                      React.createElement("input", { className: "w-full border dark:border-slate-700 bg-white dark:bg-slate-800 rounded-xl p-2 mb-3", type: "number", min: 3, max: 6, value: feedEvery, onChange: (e) => setFeedEvery(parseInt(e.target.value || "4", 10)) }),
-                    ),
-                    React.createElement("div", null,
-                      React.createElement("label", { className: "block text-sm mb-2" }, "Nap every (h)"),
-                      React.createElement("input", { className: "w-full border dark:border-slate-700 bg-white dark:bg-slate-800 rounded-xl p-2 mb-3", type: "number", min: 1, max: 4, value: napEvery, onChange: (e) => setNapEvery(parseInt(e.target.value || "2", 10)) }),
-                    ),
-                  ),
-                  React.createElement("div", { className: "flex gap-2" },
-                    React.createElement("button", { className: "px-3 py-2 rounded-xl bg-slate-900 text-white", onClick: regenerate }, "Regenerate plan"),
-                    React.createElement("button", { className: "px-3 py-2 rounded-xl border dark:border-slate-700", onClick: ()=>{ localStorage.removeItem('babyPlannerState'); location.reload(); } }, "Reset")
-                  ),
-                  React.createElement("p", { className: "text-xs text-slate-500 dark:text-slate-400 mt-3" }, "Tip: set first wake & first feed, then Regenerate.")
-                ),
-                // Plan
-                React.createElement("section", { className: "bg-white dark:bg-slate-900 rounded-2xl shadow p-4" },
-                  React.createElement("h2", { className: "font-semibold mb-3" }, "Today's Plan"),
-                  (events.length === 0) && React.createElement("div", { className: "text-sm text-slate-600 dark:text-slate-400" }, "No items yet. Set times above and hit Regenerate."),
-                  React.createElement("ul", { className: "space-y-3" },
-                    events.map((e, idx) => {
-                      const disabled = !!e.completed;
-                      return React.createElement("li", {
-                        key: e.id,
-                        className: `border dark:border-slate-700 rounded-xl p-3 ${e.type === "feed" ? "border-indigo-200/60 bg-indigo-50/40 dark:bg-indigo-950/30" : "border-emerald-200/60 bg-emerald-50/40 dark:bg-emerald-950/30"} ${disabled ? "opacity-60 grayscale" : ""} ${idx===events.findIndex(ev=>ev.start>new Date() && !ev.completed) ? "ring-2 ring-offset-2 ring-black/10 dark:ring-white/10 dark:ring-offset-slate-900" : ""}`
-                      },
-                        React.createElement("div", { className: "flex flex-col md:flex-row md:items-center gap-3" },
-                          // left
-                          React.createElement("div", { className: "flex-1 min-w-0" },
-                            React.createElement("div", { className: "flex flex-wrap items-center gap-3" },
-                              React.createElement("input", { type: "checkbox", className: "h-5 w-5 accent-slate-700", checked: !!e.completed, onChange: (ev) => setCompleted(idx, ev.target.checked) }),
-                              e.type === "feed"
-                                ? React.createElement(React.Fragment, null,
-                                    React.createElement("span", { className: "chip inline-flex items-center gap-2 px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-100 font-semibold uppercase" }, "Feed"),
-                                    React.createElement("span", { className: "font-semibold text-lg" }, formatHHmm(e.start)),
-                                    React.createElement("div", { className: "flex items-center gap-2 ml-2" },
-                                      React.createElement("span", { className: "text-xs text-slate-600 dark:text-slate-400" }, "Amount"),
-                                      React.createElement("input", { type: "number", min: "0", step: "10", value: e.ml ?? "", className: "w-24 border dark:border-slate-700 bg-white dark:bg-slate-800 rounded-lg p-1 text-sm", placeholder: "ml", onChange: (ev) => setFeedMl(idx, ev.target.value === "" ? null : Math.max(0, parseInt(ev.target.value || "0", 10))), disabled })
-                                    )
-                                  )
-                                : React.createElement(React.Fragment, null,
-                                    React.createElement("span", { className: "chip inline-flex items-center gap-2 px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-100 font-semibold uppercase" }, "Nap"),
-                                    React.createElement("div", { className: "flex items-center gap-2" },
-                                      React.createElement("label", { className: "text-xs text-slate-600 dark:text-slate-400" }, "Start"),
-                                      React.createElement("input", { type: "time", className: "border dark:border-slate-700 bg-white dark:bg-slate-800 rounded-lg p-1 text-sm", value: formatHHmm(e.start), onChange: (ev) => setNapStartTime(idx, ev.target.value), disabled })
-                                    ),
-                                    React.createElement("div", { className: "flex items-center gap-2" },
-                                      React.createElement("label", { className: "text-xs text-slate-600 dark:text-slate-400" }, "End"),
-                                      React.createElement("input", { type: "time", className: "border dark:border-slate-700 bg-white dark:bg-slate-800 rounded-lg p-1 text-sm", value: formatHHmm(e.end || addMinutes(e.start, 60)), onChange: (ev) => setNapEndTime(idx, ev.target.value), disabled })
-                                    )
-                                  )
-                            ),
-                            React.createElement("div", { className: "text-xs text-slate-500 dark:text-slate-400 ml-8 mt-1" }, `${minutesUntil(e.start)} min from now`)
-                          ),
-                          // right actions
-                          React.createElement("div", { className: "flex-none inline-flex flex-wrap gap-2 md:justify-end" },
-                            React.createElement("button", { className: "btn dark", onClick: () => nudge(idx, -15), disabled }, "-15m"),
-                            React.createElement("button", { className: "btn dark", onClick: () => nudge(idx, 15), disabled }, "+15m"),
-                            React.createElement("button", { className: `px-3 py-1.5 rounded-lg text-white ${e.type === "feed" ? "bg-indigo-700" : "bg-emerald-700"}`, onClick: () => confirmNow(idx), disabled }, "Confirm now"),
-                            React.createElement("button", { className: "btn dark", onClick: () => skip(idx), disabled }, "Skip")
-                          )
-                        )
-                      );
-                    })
-                  )
-                )
+      return React.createElement("div",{className:"max-w-5xl mx-auto p-4"},[
+        React.createElement("header",{key:"h",className:"flex items-center justify-between mb-5"},
+          React.createElement("h1",{className:"text-2xl sm:text-3xl font-bold"},"Baby Day Planner"),
+          React.createElement("label",{className:"flex items-center gap-2 text-sm"},
+            React.createElement("input",{type:"checkbox",className:"accent-slate-700 h-4 w-4",checked:theme==="dark",onChange:e=>setTheme(e.target.checked?"dark":"light")}),"Dark mode"
+          )
+        ),
+        React.createElement("div",{key:"g",className:"grid lg:grid-cols-2 gap-4 mb-5"},[
+          React.createElement("div",{key:"left"},[
+            React.createElement("div",{key:"set",className:"bg-white dark:bg-slate-900 rounded-2xl shadow p-4 mb-4"},
+              React.createElement("h2",{className:"font-semibold mb-3"},"Settings"),
+              React.createElement("label",{className:"block text-sm mb-2"},"First wake time"),
+              React.createElement("input",{className:"w-full border dark:border-slate-700 bg-white dark:bg-slate-800 rounded-xl p-2 mb-3",type:"datetime-local",value:toLocalInput(firstWake),onChange:e=>setFirstWake(fromLocalInput(e.target.value))}),
+              React.createElement("label",{className:"block text-sm mb-2"},"First feed time"),
+              React.createElement("input",{className:"w-full border dark:border-slate-700 bg-white dark:bg-slate-800 rounded-xl p-2 mb-3",type:"datetime-local",value:toLocalInput(firstFeed),onChange:e=>setFirstFeed(fromLocalInput(e.target.value))}),
+              React.createElement("div",{className:"grid grid-cols-2 gap-3"},
+                React.createElement("div",null,[
+                  React.createElement("label",{className:"block text-sm mb-2"},"Bedtime"),
+                  React.createElement("input",{className:"w-full border dark:border-slate-700 bg-white dark:bg-slate-800 rounded-xl p-2 mb-3",type:"datetime-local",value:toLocalInput(bedtime),onChange:e=>setBedtime(fromLocalInput(e.target.value))})
+                ]),
+                React.createElement("div",null,[
+                  React.createElement("label",{className:"block text-sm mb-2"},"Nap length (min)"),
+                  React.createElement("input",{className:"w-full border dark:border-slate-700 bg-white dark:bg-slate-800 rounded-xl p-2 mb-3",type:"number",min:20,max:180,value:napLen,onChange:e=>setNapLen(parseInt(e.target.value||"20",10))})
+                ])
               ),
-              // Right: Notifications + Recap
-              React.createElement("div", null,
-                React.createElement("div", { className: "bg-white dark:bg-slate-900 rounded-2xl shadow p-4 mb-4" },
-                  React.createElement("h2", { className: "font-semibold mb-3" }, "Notifications"),
-                  React.createElement("p", { className: "text-sm text-slate-600 dark:text-slate-400" }, "Grant notifications to get on-device alerts 5 minutes before items. For reliable background alerts, export to Calendar (.ics)."),
-                  React.createElement("div", { className: "mt-4" },
-                    React.createElement("button", { className: "px-3 py-2 rounded-xl bg-indigo-600 text-white", onClick: () => {
-                      const evs = events;
-                      const pad2 = n=>String(n).padStart(2,"0");
-                      const lines = ["BEGIN:VCALENDAR","VERSION:2.0","PRODID:-//BabyPlanner//EN"];
-                      for (const e of evs) {
-                        const s = e.start, en = e.end || new Date(s.getTime()+20*60000);
-                        const DTSTART = `${s.getFullYear()}${pad2(s.getMonth()+1)}${pad2(s.getDate())}T${pad2(s.getHours())}${pad2(s.getMinutes())}00`;
-                        const DTEND = `${en.getFullYear()}${pad2(en.getMonth()+1)}${pad2(en.getDate())}T${pad2(en.getHours())}${pad2(en.getMinutes())}00`;
-                        lines.push("BEGIN:VEVENT",`UID:${e.id}@bp`,`DTSTART:${DTSTART}`,`DTEND:${DTEND}`,`SUMMARY:${e.type==="feed"?"Feed":"Nap"}`,"END:VEVENT");
-                      }
-                      lines.push("END:VCALENDAR");
-                      const blob = new Blob([lines.join("\\r\\n")], { type: "text/calendar;charset=utf-8" });
-                      const url = URL.createObjectURL(blob);
-                      const a = document.createElement("a"); a.href=url; a.download="baby-plan.ics"; a.click(); URL.revokeObjectURL(url);
-                    } }, "Export today to Calendar (.ics)")
-                  )
-                ),
-                (() => {
-                  const completedFeeds = events.filter(e => e.type === "feed" && e.completed);
-                  const totalFeeds = completedFeeds.length;
-                  const totalMl = completedFeeds.reduce((s, e) => s + (e.ml ? Number(e.ml) : 0), 0);
-                  const completedNaps = events.filter(e => e.type === "nap" && e.completed && e.end);
-                  const totalNaps = completedNaps.length;
-                  const totalNapMinutes = completedNaps.reduce((s, e) => s + Math.max(0, differenceInMinutes(e.end, e.start)), 0);
-                  const hh = Math.floor(totalNapMinutes / 60);
-                  const mm = totalNapMinutes % 60;
-                  return React.createElement("div", { className: "bg-white dark:bg-slate-900 rounded-2xl shadow p-4" },
-                    React.createElement("h2", { className: "font-semibold mb-3" }, "Daily recap (ticked only)"),
-                    React.createElement("ul", { className: "space-y-2 text-sm" },
-                      React.createElement("li", { className: "flex justify-between" }, React.createElement("span", { className: "text-slate-600 dark:text-slate-400" }, "Feeds (count)"), React.createElement("span", { className: "font-semibold" }, String(totalFeeds))),
-                      React.createElement("li", { className: "flex justify-between" }, React.createElement("span", { className: "text-slate-600 dark:text-slate-400" }, "Milk total (ml)"), React.createElement("span", { className: "font-semibold" }, String(totalMl))),
-                      React.createElement("li", { className: "flex justify-between" }, React.createElement("span", { className: "text-slate-600 dark:text-slate-400" }, "Naps (count)"), React.createElement("span", { className: "font-semibold" }, String(totalNaps))),
-                      React.createElement("li", { className: "flex justify-between" }, React.createElement("span", { className: "text-slate-600 dark:text-slate-400" }, "Nap time total"), React.createElement("span", { className: "font-semibold" }, `${pad2(hh)}h ${pad2(mm)}m`)),
+              React.createElement("div",{className:"grid grid-cols-2 gap-3"},
+                React.createElement("div",null,[
+                  React.createElement("label",{className:"block text-sm mb-2"},"Feed every (h)"),
+                  React.createElement("input",{className:"w-full border dark:border-slate-700 bg-white dark:bg-slate-800 rounded-xl p-2 mb-3",type:"number",min:3,max:6,value:feedEvery,onChange:e=>setFeedEvery(parseInt(e.target.value||"4",10))})
+                ]),
+                React.createElement("div",null,[
+                  React.createElement("label",{className:"block text-sm mb-2"},"Nap every (h)"),
+                  React.createElement("input",{className:"w-full border dark:border-slate-700 bg-white dark:bg-slate-800 rounded-xl p-2 mb-3",type:"number",min:1,max:4,value:napEvery,onChange:e=>setNapEvery(parseInt(e.target.value||"2",10))})
+                ])
+              ),
+              React.createElement("div",{className:"flex gap-2"},
+                React.createElement("button",{className:"px-3 py-2 rounded-xl bg-slate-900 text-white",onClick:regenerate},"Regenerate plan"),
+                React.createElement("button",{className:"px-3 py-2 rounded-xl border dark:border-slate-700",onClick:reset},"Reset")
+              ),
+              React.createElement("p",{className:"text-xs text-slate-500 dark:text-slate-400 mt-3"},"Tip: set first wake & first feed, then Regenerate.")
+            ),
+            React.createElement("section",{key:"plan",className:"bg-white dark:bg-slate-900 rounded-2xl shadow p-4"},
+              React.createElement("h2",{className:"font-semibold mb-3"},"Today's Plan"),
+              React.createElement("ul",{className:"space-y-3"},
+                events.map((e,idx)=>React.createElement("li",{key:e.id,className:`border dark:border-slate-700 rounded-xl p-3 ${e.type==="feed"?"border-indigo-200/60 bg-indigo-50/40 dark:bg-indigo-950/30":"border-emerald-200/60 bg-emerald-50/40 dark:bg-emerald-950/30"} ${e.completed?"opacity-60 grayscale":""}`},[
+                  React.createElement("div",{className:"flex flex-col md:flex-row md:items-center gap-3"},[
+                    React.createElement("div",{className:"flex-1 min-w-0"},
+                      React.createElement("div",{className:"flex flex-wrap items-center gap-3"},
+                        React.createElement("input",{type:"checkbox",className:"h-5 w-5 accent-slate-700",checked:!!e.completed,onChange:ev=>setCompleted(idx,ev.target.checked)}),
+                        e.type==="feed"
+                          ? React.createElement(React.Fragment,null,
+                              React.createElement("span",{className:"chip inline-flex items-center gap-2 px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-100 font-semibold uppercase"},"Feed"),
+                              React.createElement("span",{className:"font-semibold text-lg"},fmtHHmm(e.start)),
+                              React.createElement("div",{className:"flex items-center gap-2 ml-2"},
+                                React.createElement("span",{className:"text-xs text-slate-600 dark:text-slate-400"},"Amount"),
+                                React.createElement("input",{type:"number",min:"0",step:"10",value:e.ml??"",className:"w-24 border dark:border-slate-700 bg-white dark:bg-slate-800 rounded-lg p-1 text-sm",placeholder:"ml",onChange:ev=>setFeedMl(idx,ev.target.value===""?null:Math.max(0,parseInt(ev.target.value||"0",10))),disabled:e.completed})
+                              )
+                            )
+                          : React.createElement(React.Fragment,null,
+                              React.createElement("span",{className:"chip inline-flex items-center gap-2 px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-100 font-semibold uppercase"},"Nap"),
+                              React.createElement("div",{className:"flex items-center gap-2"},
+                                React.createElement("label",{className:"text-xs text-slate-600 dark:text-slate-400"},"Start"),
+                                React.createElement("input",{type:"time",className:"border dark:border-slate-700 bg-white dark:bg-slate-800 rounded-lg p-1 text-sm",value:fmtHHmm(e.start),onChange:ev=>setNapStart(idx,ev.target.value),disabled:e.completed})
+                              ),
+                              React.createElement("div",{className:"flex items-center gap-2"},
+                                React.createElement("label",{className:"text-xs text-slate-600 dark:text-slate-400"},"End"),
+                                React.createElement("input",{type:"time",className:"border dark:border-slate-700 bg-white dark:bg-slate-800 rounded-lg p-1 text-sm",value:fmtHHmm(e.end||addMinutes(e.start,napLen)),onChange:ev=>setNapEnd(idx,ev.target.value),disabled:e.completed})
+                              )
+                            )
+                      ),
+                      React.createElement("div",{className:"text-xs text-slate-500 dark:text-slate-400 ml-8 mt-1"},`${minsUntil(e.start)} min from now`)
+                    ),
+                    React.createElement("div",{className:"flex-none inline-flex flex-wrap gap-2 md:justify-end"},
+                      React.createElement("button",{className:"btn dark",onClick:()=>nudge(idx,-15),disabled:e.completed},"-15m"),
+                      React.createElement("button",{className:"btn dark",onClick:()=>nudge(idx,15),disabled:e.completed},"+15m"),
+                      React.createElement("button",{className:`px-3 py-1.5 rounded-lg text-white ${e.type==="feed"?"bg-indigo-700":"bg-emerald-700"}`,onClick:()=>confirmNow(idx),disabled:e.completed},"Confirm now"),
+                      React.createElement("button",{className:"btn dark",onClick:()=>skip(idx),disabled:e.completed},"Skip")
                     )
-                  );
-                })()
+                  ])
+                ]))
               )
             )
-          )
-        );
-      }
+          ]),
+          React.createElement("div",{key:"right"},[
+            React.createElement("div",{key:"noti",className:"bg-white dark:bg-slate-900 rounded-2xl shadow p-4 mb-4"},
+              React.createElement("h2",{className:"font-semibold mb-3"},"Notifications"),
+              React.createElement("p",{className:"text-sm text-slate-600 dark:text-slate-400"},"Grant notifications to get on-device alerts 5 minutes before items. For reliable background alerts, export to Calendar (.ics)."),
+              React.createElement("button",{className:"px-3 py-2 rounded-xl bg-indigo-600 text-white mt-2",onClick:()=>{
+                const pad2=n=>String(n).padStart(2,"0");
+                const lines=["BEGIN:VCALENDAR","VERSION:2.0","PRODID:-//BabyPlanner//EN"];
+                for(const e of events){
+                  const s=e.start,en=e.end||new Date(s.getTime()+20*60000);
+                  const DTSTART=`${s.getFullYear()}${pad2(s.getMonth()+1)}${pad2(s.getDate())}T${pad2(s.getHours())}${pad2(s.getMinutes())}00`;
+                  const DTEND=`${en.getFullYear()}${pad2(en.getMonth()+1)}${pad2(en.getDate())}T${pad2(en.getHours())}${pad2(en.getMinutes())}00`;
+                  lines.push("BEGIN:VEVENT",`UID:${e.id}@bp`,`DTSTART:${DTSTART}`,`DTEND:${DTEND}`,`SUMMARY:${e.type==="feed"?"Feed":"Nap"}`,"END:VEVENT");
+                }
+                lines.push("END:VCALENDAR");
+                const blob=new Blob([lines.join("\r\n")],{type:"text/calendar;charset=utf-8"});
+                const url=URL.createObjectURL(blob); const a=document.createElement("a"); a.href=url; a.download="baby-plan.v4.ics"; a.click(); URL.revokeObjectURL(url);
+              }},"Export today to Calendar (.ics)")
+            ),
+            React.createElement("div",{key:"recap",className:"bg-white dark:bg-slate-900 rounded-2xl shadow p-4"},
+              React.createElement("h2",{className:"font-semibold mb-3"},"Daily recap (ticked only)"),
+              React.createElement("ul",{className:"space-y-2 text-sm"},[
+                React.createElement("li",{className:"flex justify-between"},[React.createElement("span",{className:"text-slate-600 dark:text-slate-400"},"Feeds (count)"),React.createElement("span",{className:"font-semibold"},String(feedsDone.length))]),
+                React.createElement("li",{className:"flex justify-between"},[React.createElement("span",{className:"text-slate-600 dark:text-slate-400"},"Milk total (ml)"),React.createElement("span",{className:"font-semibold"},String(milk))]),
+                React.createElement("li",{className:"flex justify-between"},[React.createElement("span",{className:"text-slate-600 dark:text-slate-400"},"Naps (count)"),React.createElement("span",{className:"font-semibold"},String(napsDone.length))]),
+                React.createElement("li",{className:"flex justify-between"},[React.createElement("span",{className:"text-slate-600 dark:text-slate-400"},"Nap time total"),React.createElement("span",{className:"font-semibold"},`${pad2(hh)}h ${pad2(mm)}m`)])
+              ])
+            )
+          ])
+        ])
+      ]);
+    }
 
-      const root = ReactDOM.createRoot(document.getElementById("root"));
-      root.render(React.createElement(App));
-    </script>
-  </body>
+    const root=ReactDOM.createRoot(document.getElementById("root"));
+    root.render(React.createElement(App));
+  </script>
+</body>
 </html>
