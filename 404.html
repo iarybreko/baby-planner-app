@@ -46,20 +46,33 @@
       const minutesUntil = (d) => Math.max(0, Math.round((d.getTime() - Date.now()) / 60000));
       const sortEvents = (arr) => [...arr].sort((a,b)=> a.start - b.start);
 
-      // Build schedule from rules
+      // v3.8: Interleaved generator — always pick the next earliest event
       function buildSchedule({ firstWake, firstFeed, bedtime, feedEveryHours, napEveryHours, napDurationMinutes }) {
         const events = [];
-        // feeds every N hours from last feed START
-        for (let t = new Date(firstFeed); isBefore(t, bedtime); t = addHours(t, feedEveryHours)) {
-          events.push({ id: uid(), type: "feed", start: new Date(t), completed: false, ml: null });
-        }
-        // naps every N hours from last nap END
-        let napStart = addHours(firstWake, napEveryHours);
-        let napEnd = addMinutes(napStart, napDurationMinutes);
-        while (isBefore(napStart, bedtime)) {
-          events.push({ id: uid(), type: "nap", start: new Date(napStart), end: new Date(napEnd), completed: false });
-          napStart = addHours(napEnd, napEveryHours);
-          napEnd = addMinutes(napStart, napDurationMinutes);
+        let nextFeed = new Date(firstFeed);
+        let nextNapStart = addHours(firstWake, napEveryHours);
+        let nextNapEnd = addMinutes(nextNapStart, napDurationMinutes);
+
+        // loop until next event would start after bedtime
+        while (true) {
+          const nextEventTime = (t) => (t ? t.getTime() : Infinity);
+          const tFeed = nextEventTime(nextFeed);
+          const tNap = nextEventTime(nextNapStart);
+          const tMin = Math.min(tFeed, tNap);
+          if (!isFinite(tMin)) break;
+          if (tMin >= bedtime.getTime()) break;
+
+          if (tFeed <= tNap) {
+            // feed comes next
+            events.push({ id: uid(), type: "feed", start: new Date(nextFeed), completed: false, ml: null });
+            nextFeed = addHours(nextFeed, feedEveryHours);
+          } else {
+            // nap comes next
+            events.push({ id: uid(), type: "nap", start: new Date(nextNapStart), end: new Date(nextNapEnd), completed: false });
+            // next nap starts after previous nap end + napEveryHours
+            nextNapStart = addHours(nextNapEnd, napEveryHours);
+            nextNapEnd = addMinutes(nextNapStart, napDurationMinutes);
+          }
         }
         return sortEvents(events);
       }
@@ -186,21 +199,17 @@
         };
 
         useEffect(() => { if (!saved) regenerate(); }, []);
-
-        // Persist
         useEffect(() => { saveState({ firstWake, firstFeed, bedtime, feedEvery, napEvery, napDuration, events }); }, [firstWake, firstFeed, bedtime, feedEvery, napEvery, napDuration, events]);
-
-        // Notifications
         useEffect(() => {
           (async () => { try { await ensureNotificationPermission(); cleanupTimersRef.current(); cleanupTimersRef.current = scheduleLocalNotifs(events); } catch {} })();
           return () => cleanupTimersRef.current();
         }, [events]);
 
-        // --- Enforce global chronological ordering (safety net) ---
+        // Global chronological sort safety net
         useEffect(() => {
           const sorted = events.slice().sort((a,b)=>a.start-b.start);
-          const sameOrder = sorted.length===events.length && sorted.every((e,i)=> e.id === events[i].id);
-          if (!sameOrder) setEvents(sorted);
+          const same = sorted.length===events.length && sorted.every((e,i)=> e.id===events[i].id);
+          if (!same) setEvents(sorted);
         }, [events]);
 
         const setCompleted = (idx, value) => setEvents(sortEvents(events.map((e,i)=> i===idx ? { ...e, completed: value } : e)));
